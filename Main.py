@@ -1,5 +1,7 @@
+from diffusers import AutoencoderKL, UNet2DConditionModel, StableDiffusionPipeline, StableDiffusionImg2ImgPipeline, DPMSolverMultistepScheduler
+import random, torch, psutil
 import streamlit as App
-import random
+from PIL import Image
 
 # Settings
 
@@ -11,12 +13,6 @@ PhotoRealMaxSteps = 20 # The maximum number of steps for the PhotoReal model
 MaxQueue = 16 # The maximum number of images that can be queued at once
 
 # Main App
-
-@App.cache_resource(max_entries=1)
-def GetUser():
-    App.write(App.experimental_user['email'])
-
-GetUser()
 
 App.title('Dreamlike Grouped')
 Info = App.expander('Info & Links')
@@ -59,6 +55,28 @@ def CreateQueue():
     return Queue
 
 Queue = CreateQueue()
+
+# Main Image Generator
+
+@App.cache(max_entries=MaxQueue)
+def GenerateImage(Model, Batch, Steps, Seed, Prompt):
+    Pipe = StableDiffusionPipeline.from_pretrained('dreamlike-art/dreamlike-diffusion-1.0') if Model == 'Diffusion' else StableDiffusionImg2ImgPipeline.from_pretrained('dreamlike-art/dreamlike-photoreal-2.0')
+    App.write(psutil.virtual_memory().percent)
+    if Seed == 0:
+        Seed = random.randint(0, 2147483647)
+    Generator = torch.Generator('cpu').manual_seed(Seed)
+    Pipe.enable_xformers_memory_efficient_attention()
+    Result = Pipe.generate(
+        prompt=Prompt,
+        num_steps=Steps,
+        batch_size=Batch,
+        num_return_sequences=Batch,
+        return_full_text=False,
+        return_tensors='pt',
+        seed=Seed,
+        generator=Generator
+    )
+    return Result
 
 # Sidebar
 
