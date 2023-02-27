@@ -1,4 +1,4 @@
-import random, psutil
+import random
 import streamlit as App
 from PIL import Image
 
@@ -65,7 +65,6 @@ Queue = CreateQueue()
 @App.cache(max_entries=MaxQueue)
 def GenerateImage(Model, Batch, Steps, Seed, Prompt):
     Pipe = StableDiffusionPipeline.from_pretrained('dreamlike-art/dreamlike-diffusion-1.0') if Model == 'Diffusion' else StableDiffusionImg2ImgPipeline.from_pretrained('dreamlike-art/dreamlike-photoreal-2.0')
-    App.write(psutil.virtual_memory().percent)
     if Seed == 0:
         Seed = random.randint(0, 2147483647)
     Generator = torch.Generator('cpu').manual_seed(Seed)
