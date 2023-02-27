@@ -1,9 +1,11 @@
-import random, torch, psutil
+import random, psutil
 import streamlit as App
 from PIL import Image
 
 exec('pip install diffusers')
+exec('pip install torch')
 from diffusers import AutoencoderKL, UNet2DConditionModel, StableDiffusionPipeline, StableDiffusionImg2ImgPipeline, DPMSolverMultistepScheduler
+import torch
 
 # Settings
 
