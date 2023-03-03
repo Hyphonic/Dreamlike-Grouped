@@ -1,127 +1,246 @@
-import random
-import streamlit as App
-from PIL import Image
+import os, sys, random, string, time, logging
+from threading import Thread
+from pathlib import Path
+from queue import Queue
+import gradio as App
 
-exec('pip install diffusers')
-exec('pip install torch')
-from diffusers import AutoencoderKL, UNet2DConditionModel, StableDiffusionPipeline, StableDiffusionImg2ImgPipeline, DPMSolverMultistepScheduler
-import torch
+logging.basicConfig(level=logging.INFO, format=f'[%(asctime)s] %(message)s', datefmt='%H:%M:%S')
 
-# Settings
+logging.info('Starting Dreamlike Grouped')
 
-App.set_page_config(page_title='Dreamlike Grouped', page_icon='⚡', layout='centered', initial_sidebar_state='expanded', menu_items={'Get Help': 'https://huggingface.co/spaces/Hyphonical/Dreamlike-Grouped/discussions/3', 'Report a bug': 'https://huggingface.co/spaces/Hyphonical/Dreamlike-Grouped/discussions/3', 'About': 'https://huggingface.co/spaces/Hyphonical/Dreamlike-Grouped'})
-DiffusionMaxBatch = 8 # The maximum batch size for the Diffusion model
-DiffusionMaxSteps = 40 # The maximum number of steps for the Diffusion model
-PhotoRealMaxBatch = 2 # The maximum batch size for the PhotoReal model
-PhotoRealMaxSteps = 20 # The maximum number of steps for the PhotoReal model
-MaxQueue = 16 # The maximum number of images that can be queued at once
+logging.info('Loading MagicPrompt')
+MagicPrompt=App.Interface.load('spaces/phenomenon1981/MagicPrompt-Stable-Diffusion')
+def get_prompts(prompt_text):
+    if prompt_text:
+        return MagicPrompt('dreamlikeart, ' + prompt_text)
+    else:
+        return MagicPrompt('')
+logging.info('loading Dreamlike Diffusion')
+DreamDiffusion=App.Interface.load('models/dreamlike-art/dreamlike-diffusion-1.0') # Credits to Dreamlike
+logging.info('Loading Dreamlike PhotoReal')
+DreamPhotoReal = DreamDiffusion
+#DreamPhotoReal=App.Interface.load('models/dreamlike-art/dreamlike-photoreal-2.0') # Credits to Dreamlike
 
-# Main App
+def RestartScript():
+    while True:
+        RandomTime = random.randint(540, 600)
+        time.sleep(RandomTime)
+        logging.info('Restarting')
+        os.execl(sys.executable, sys.executable, *sys.argv)
 
-App.title('Dreamlike Grouped')
-Info = App.expander('Info & Links')
+logging.info('Starting Auto-Restarter')
+RestartThread = Thread(target=RestartScript, daemon=True)
+RestartThread.start()
 
-with Info:
-    App.markdown('''
-    # Dreamlike Grouped
-    This is a demo that utilizes the Dreamlike **Diffusion** and **Dreamlike PhotoReal** to create awesome images just for you!
-    To get started, simply click on the sidebar and select the model you want to use.
-    After that, you give your own input and the model will generate an image based on that, or you can use a random input.
-    Then, click on the button below to start the process.
-    You can also change the settings to your liking.
+queue = Queue()
+queue_threshold = 100
 
-    ## Settings
-    - **Steps**: The number of steps the model will take to generate the image.
-    - **Seed**: The seed of the model. This is the input that the model will use to generate the image.
-    - **Prompt**: The prompt of the model. This is the input that the model will use to generate the image.
-    - **Batch**: The number of images to generate at once.
+def AddNoise(Prompt, NoiseLevel=0.00):
+    if NoiseLevel == 0:
+        NoiseLevel = 0.00
+    PercentageNoise = NoiseLevel * 5
+    NumberNoiseCharacters = int(len(Prompt) * (PercentageNoise/100))
+    NoiseIndices = random.sample(range(len(Prompt)), NumberNoiseCharacters)
+    PromptList = list(Prompt)
+    NoiseCharacters = list(string.ascii_letters + string.punctuation + ' ' + string.digits)
+    NoiseCharacters.extend(['😍', '💩', '😂', '🤔', '😊', '🤗', '😭', '🙄', '😷', '🤯', '🤫', '🥴', '😴', '🤩', '🥳', '😔', '😩', '🤪', '😇', '🤢', '😈', '👹', '👻', '🤖', '👽', '💀', '🎃', '🎅', '🎄', '🎁', '🎂', '🎉', '🎈', '🎊', '🎮', '❤️', '💔', '💕', '💖', '💗', '🐶', '🐱', '🐭', '🐹', '🦊', '🐻', '🐨', '🐯', '🦁', '🐘', '🔥', '🌧️', '🌞', '🌈', '💥', '🌴', '🌊', '🌺', '🌻', '🌸', '🎨', '🌅', '🌌', '☁️', '⛈️', '❄️', '☀️', '🌤️', '⛅️', '🌥️', '🌦️', '🌧️', '🌩️', '🌨️', '🌫️', '☔️', '🌬️', '💨', '🌪️', '🌈'])
+    for Index in NoiseIndices:
+        PromptList[Index] = random.choice(NoiseCharacters)
+    return ''.join(PromptList)
 
-    ## FAQ
-    ### Why is the model taking so long to generate the image?
-    The Model currently used is generating the image using a technique called **Diffusion**. This technique is very slow, but it produces very high quality images.
-    ### Why is there a limit of 4 images for the PhotoReal Model?
-    The PhotoReal Model is very large, and it takes a lot of memory to generate the images. This is why we have a limit of 4 images at once.
-    Dreamlike Diffusion Model is usually faster than the PhotoReal Model.
-    ### More Questions?
-    If you have any more questions, feel free to create a Discussion, please give as much information as possible.
+def GetRandomPrompt():
+    with open('Prompts.txt', 'r') as Prompts:
+        Prompts = Prompts.readlines()
+        return random.choice(Prompts)
 
-    ## Links
-    - Dreamlike Website: (ttps://dreamlike.art/
-    - Official Dreamlike Diffusion Model: https://huggingface.co/dreamlike-art/dreamlike-diffusion-1.0
-    - Official Dreamlike PhotoReal Model: https://huggingface.co/dreamlike-art/dreamlike-photoreal-2.0
-    ''')
+def FeedBack():
+    logging.info('Good Feedback 😮')
+    return
 
-# Queue
+def SendIt1(Inputs, NoiseLevel, DreamDiffusion=DreamDiffusion):
+    logging.info('Creating Image On 8 Threads')
+    logging.info(f'Using Prompt: {Inputs}')
+    logging.info('Creating Image On Thread 1')
+    NoisedPrompt = AddNoise(Inputs, NoiseLevel)
+    while queue.qsize() >= queue_threshold:
+        time.sleep(2)
+    queue.put(NoisedPrompt)
+    Output1 = DreamDiffusion(NoisedPrompt)
+    logging.info('Done Creating Image On Thread 1')
+    return Output1
 
-@App.cache_resource(max_entries=MaxQueue)
-def CreateQueue():
-    Queue = []
-    return Queue
+def SendIt2(Inputs, NoiseLevel, DreamDiffusion=DreamDiffusion):
+    logging.info('Creating Image On Thread 2')
+    NoisedPrompt = AddNoise(Inputs, NoiseLevel)
+    while queue.qsize() >= queue_threshold:
+        time.sleep(2)
+    queue.put(NoisedPrompt)
+    Output2 = DreamDiffusion(NoisedPrompt)
+    logging.info('Done Creating Image On Thread 2')
+    return Output2
 
-Queue = CreateQueue()
+def SendIt3(Inputs, NoiseLevel, DreamDiffusion=DreamDiffusion):
+    logging.info('Creating Image On Thread 3')
+    NoisedPrompt = AddNoise(Inputs, NoiseLevel)
+    while queue.qsize() >= queue_threshold:
+        time.sleep(2)
+    queue.put(NoisedPrompt)
+    Output3 = DreamDiffusion(NoisedPrompt)
+    logging.info('Done Creating Image On Thread 3')
+    return Output3
 
-# Main Image Generator
+def SendIt4(Inputs, NoiseLevel, DreamDiffusion=DreamDiffusion):
+    logging.info('Creating Image On Thread 4')
+    NoisedPrompt = AddNoise(Inputs, NoiseLevel)
+    while queue.qsize() >= queue_threshold:
+        time.sleep(2)
+    queue.put(NoisedPrompt)
+    Output4 = DreamDiffusion(NoisedPrompt)
+    logging.info('Done Creating Image On Thread 4')
+    return Output4
 
-@App.cache(max_entries=MaxQueue)
-def GenerateImage(Model, Batch, Steps, Seed, Prompt):
-    Pipe = StableDiffusionPipeline.from_pretrained('dreamlike-art/dreamlike-diffusion-1.0') if Model == 'Diffusion' else StableDiffusionImg2ImgPipeline.from_pretrained('dreamlike-art/dreamlike-photoreal-2.0')
-    if Seed == 0:
-        Seed = random.randint(0, 2147483647)
-    Generator = torch.Generator('cpu').manual_seed(Seed)
-    Pipe.enable_xformers_memory_efficient_attention()
-    Result = Pipe.generate(
-        prompt=Prompt,
-        num_steps=Steps,
-        batch_size=Batch,
-        num_return_sequences=Batch,
-        return_full_text=False,
-        return_tensors='pt',
-        seed=Seed,
-        generator=Generator
+def SendIt5(Inputs, NoiseLevel, DreamDiffusion=DreamDiffusion):
+    logging.info('Creating Image On Thread 5')
+    NoisedPrompt = AddNoise(Inputs, NoiseLevel)
+    while queue.qsize() >= queue_threshold:
+        time.sleep(2)
+    queue.put(NoisedPrompt)
+    Output5 = DreamPhotoReal(NoisedPrompt)
+    logging.info('Done Creating Image On Thread 5')
+    return Output5
+
+def SendIt6(Inputs, NoiseLevel, DreamDiffusion=DreamDiffusion):
+    logging.info('Creating Image On Thread 6')
+    NoisedPrompt = AddNoise(Inputs, NoiseLevel)
+    while queue.qsize() >= queue_threshold:
+        time.sleep(2)
+    queue.put(NoisedPrompt)
+    Output6 = DreamPhotoReal(NoisedPrompt)
+    logging.info('Done Creating Image On Thread 6')
+    return Output6
+
+def SendIt7(Inputs, NoiseLevel, DreamDiffusion=DreamDiffusion):
+    logging.info('Creating Image On Thread 7')
+    NoisedPrompt = AddNoise(Inputs, NoiseLevel)
+    while queue.qsize() >= queue_threshold:
+        time.sleep(2)
+    queue.put(NoisedPrompt)
+    Output7 = DreamPhotoReal(NoisedPrompt)
+    logging.info('Done Creating Image On Thread 7')
+    return Output7
+
+def SendIt8(Inputs, NoiseLevel, DreamDiffusion=DreamDiffusion):
+    logging.info('Creating Image On Thread 8')
+    NoisedPrompt = AddNoise(Inputs, NoiseLevel)
+    while queue.qsize() >= queue_threshold:
+        time.sleep(2)
+    queue.put(NoisedPrompt)
+    Output8 = DreamPhotoReal(NoisedPrompt)
+    logging.info('Done Creating Image On Thread 8')
+    return Output8
+
+logging.info('Loading Interface')
+with App.Blocks(css='style.css') as demo:
+    App.HTML(
+        '''
+            <div style='text-align: center; max-width: 650px; margin: 0 auto;'>
+              <div>
+                <h1 style='font-weight: 900; font-size: 3rem; margin-bottom:20px;'>
+                  Dreamlike Grouped
+                </h1>
+              </div>
+              <p style='margin-bottom: 10px; font-size: 96%'>
+              Dreamlike Diffusion 1.0 | Dreamlike PhotoReal 2.0
+              Noise Level: Controls how much randomness is added to the input before it is sent to the model. Higher noise level produces more diverse Outputs, while lower noise level produces similar Outputs,
+                <a created by phenomenon1981</a>.
+              </p>
+              <p style='margin-bottom: 10px; font-size: 98%'>
+              ❤️ Press the Like Button if you enjoy my space! ❤️</a>
+              </p>
+            </div>
+        '''
     )
-    return Result
+    with App.Column(elem_id='col-container'):
+        with App.Row(variant='compact'):
+            input_text = App.Textbox(
+                label='Short Prompt',
+                show_label=False,
+                max_lines=4,
+                placeholder='Enter a basic idea and click "Magic Prompt". Got no ideas? No problem, Simply just hit the magic button!',
+            ).style(
+                container=False,
+            )
+            output_prompt = App.Textbox(
+                label='Random Prompt',
+                show_label=False,
+                max_lines=4,
+                placeholder='Click "Random Prompt" to get a random prompt from a list!',
+            ).style(
+                container=False,
+            )
+            SeePrompts = App.Button('✨ Magic Prompt ✨').style(full_width=False)
+            RandomPrompt = App.Button('🔄️ Random Prompt 🔄️').style(full_width=False)
 
-# Sidebar
+        
+        with App.Row(variant='compact'):
+            prompt = App.Textbox(
+                label='Enter your prompt',
+                show_label=False,
+                max_lines=4,
+                placeholder='Full Prompt',
+            ).style(
+                container=False,
+            )
+            Run = App.Button('Generate Images').style(full_width=False)
+        
+        with App.Row():
+            with App.Row():
+                NoiseLevel = App.Slider(minimum=0.1, maximum=3, step=0.1, label='Noise Level', value=0.5)
 
-App.sidebar.title('Dreamlike Grouped')
-App.sidebar.subheader('Select Model')
-Model = App.sidebar.selectbox('Model', ('Diffusion', 'PhotoReal'))
+        with App.Row():
+            with App.Row():
+                Output1=App.Image(label='Dreamlike Diffusion 1.0',show_label=True)
+                Output2=App.Image(label='Dreamlike Diffusion 1.0',show_label=False)
+                Output3=App.Image(label='Dreamlike Diffusion 1.0',show_label=False)
+                Output4=App.Image(label='Dreamlike Diffusion 1.0',show_label=False)
+                Output5=App.Image(label='Dreamlike PhotoReal 2.0',show_label=True)
+                Output6=App.Image(label='Dreamlike PhotoReal 2.0',show_label=False)
+                Output7=App.Image(label='Dreamlike PhotoReal 2.0',show_label=False)
+                Output8=App.Image(label='Dreamlike PhotoReal 2.0',show_label=False)
 
-if Model == 'Diffusion':
-    App.sidebar.subheader('Settings')
-    Batch = App.sidebar.slider('Batch', min_value=1, max_value=DiffusionMaxBatch, value=1, step=1) # How many images to generate at once
-    Steps = App.sidebar.slider('Steps', min_value=1, max_value=DiffusionMaxSteps, value=20, step=1) # How many steps to take to generate the image
-    Seed = App.sidebar.text_input('Seed (Leave blank for random)', value='') # The seed of the image
-    Prompt = App.sidebar.text_input('Prompt (Leave blank for random)', value='') # The prompt of the image
-    Generate = App.sidebar.button(f'Generate {Batch} Image' if Batch == 1 else f'Generate {Batch} Images') # The button to generate the image
+        with App.Row():
+            with App.Row():
+                Feedback = App.Button('✅ Click here to send a positive feedback ✅')
+        
 
-    if Generate: # Handles The Queue
-        for _ in range(Batch):
-            Queue.append({'Model': Model, 'Batch': Batch, 'Steps': Steps, 'Seed': Seed, 'Prompt': Prompt}) if len(Queue) < MaxQueue else Queue.pop(0) and Queue.append({'Model': Model, 'Batch': Batch, 'Steps': Steps, 'Seed': Seed, 'Prompt': Prompt})
-        if len(Queue) == 1:
-            if Batch == 1:
-                App.info(f'Generating Your Image | Capacity ({len(Queue)/MaxQueue * 100})%')
-            else:
-                App.info(f'Generating Your Images | Capacity ({len(Queue)/MaxQueue * 100})%')
+        SeePrompts.click(get_prompts, inputs=[input_text], outputs=[prompt], queue=False)
+        RandomPrompt.click(GetRandomPrompt, outputs=[prompt], queue=False)
+        Run.click(SendIt1, inputs=[prompt, NoiseLevel], outputs=[Output1])
+        Run.click(SendIt2, inputs=[prompt, NoiseLevel], outputs=[Output2])
+        Run.click(SendIt3, inputs=[prompt, NoiseLevel], outputs=[Output3])
+        Run.click(SendIt4, inputs=[prompt, NoiseLevel], outputs=[Output4])
+        Run.click(SendIt5, inputs=[prompt, NoiseLevel], outputs=[Output5])
+        Run.click(SendIt6, inputs=[prompt, NoiseLevel], outputs=[Output6])
+        Run.click(SendIt7, inputs=[prompt, NoiseLevel], outputs=[Output7])
+        Run.click(SendIt8, inputs=[prompt, NoiseLevel], outputs=[Output8])
+        Feedback.click(FeedBack)
 
-        elif len(Queue) > 1 and len(Queue) <= MaxQueue:
-            if len(Queue) == MaxQueue:
-                App.warning(f'Queue is full | Capacity ({len(Queue)/MaxQueue * 100})%')
-            elif Batch == 1:
-                App.info(f'Queued Your Image | Capacity ({len(Queue)/MaxQueue * 100})%')
-            else:
-                App.info(f'Queued Your Images | Capacity ({len(Queue)/MaxQueue * 100})%')
 
-        else:
-            App.error('An unknown error has occurred.')
-    
-elif Model == 'PhotoReal':
-    App.sidebar.subheader('Settings')
-    Batch = App.sidebar.slider('Batch', min_value=1, max_value=PhotoRealMaxBatch, value=1, step=1)
-    Steps = App.sidebar.slider('Steps', min_value=1, max_value=PhotoRealMaxSteps, value=20, step=1)
-    Seed = App.sidebar.text_input('Seed (Leave blank for random)', value='')
-    Prompt = App.sidebar.text_input('Prompt (Leave blank for random)', value='')
-    Generate = App.sidebar.button(f'Generate {Batch} Image' if Batch == 1 else f'Generate {Batch} Images') # The button to generate the image
+        with App.Row():
+                App.HTML(    
+    '''
+        <div class='footer'>
+        <p> Demo for <a href='https://huggingface.co/dreamlike-art/dreamlike-diffusion-1.0'>Dreamlike Diffusion 1.0</a> Stable Diffusion model
+        <p> Demo for <a href='https://huggingface.co/dreamlike-art/dreamlike-photoreal-2.0'>Dreamlike PhotoReal 2.0</a> Stable Diffusion model
+</p>
+</div>
+        <div class='acknowledgments' style='font-size: 115%'>
+            <p> Unleash your creative side and generate mesmerizing images with just a few clicks! Enter a spark of inspiration in the 'Basic Idea' text box and click the 'Magic Prompt' button to elevate it to a polished masterpiece. Make any final tweaks in the 'Full Prompt' box and hit the 'Generate Images' button to watch your vision come to life. Experiment with the 'Noise Level' for a diverse range of Outputs, from similar to wildly unique. Let the fun begin!
+            </p>
+        </div>
+    '''
+)
 
-    if Generate:
-        App.error('The PhotoReal Model is currently not available.')
+    logging.info('Using Demo With 200 Concurrency Count')
+    demo.launch(enable_queue=True, inline=True, share=False)
+    block.queue(concurrency_count=300)
